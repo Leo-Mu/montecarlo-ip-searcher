@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/dns"
+	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/engine"
 	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/output"
 	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/probe"
-	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/search"
 )
 
 type repeatStringFlag []string
@@ -61,6 +61,10 @@ func main() {
 		dnsSubdomain   string
 		dnsUploadCount int
 		dnsTeamID      string
+
+		// New engine parameters
+		diversityWeight float64
+		splitInterval   int
 	)
 
 	flag.Var(&cidrs, "cidr", "CIDR to search (repeatable). Example: 1.1.0.0/16 or 2606:4700::/32")
@@ -82,7 +86,7 @@ func main() {
 	flag.StringVar(&outPath, "out-file", "", "Write output to file (default: stdout)")
 	flag.IntVar(&splitV4, "split-step-v4", 2, "When splitting an IPv4 prefix, increase prefix bits by this step")
 	flag.IntVar(&splitV6, "split-step-v6", 4, "When splitting an IPv6 prefix, increase prefix bits by this step")
-	flag.IntVar(&minSplit, "min-samples-split", 20, "Minimum samples on a prefix before it can be split")
+	flag.IntVar(&minSplit, "min-samples-split", 5, "Minimum samples on a prefix before it can be split")
 	flag.IntVar(&maxBitsV4, "max-bits-v4", 24, "Maximum IPv4 prefix bits to drill down to")
 	flag.IntVar(&maxBitsV6, "max-bits-v6", 56, "Maximum IPv6 prefix bits to drill down to")
 	flag.Int64Var(&seed, "seed", 0, "Random seed (0 = time-based)")
@@ -95,13 +99,17 @@ func main() {
 	flag.StringVar(&dnsSubdomain, "dns-subdomain", "", "Subdomain to update (e.g., 'cf' for cf.example.com)")
 	flag.IntVar(&dnsUploadCount, "dns-upload-count", 0, "Number of IPs to upload (default: same as --download-top)")
 	flag.StringVar(&dnsTeamID, "dns-team-id", "", "Vercel Team ID (optional, or use VERCEL_TEAM_ID env)")
+
+	// New engine parameters
+	flag.Float64Var(&diversityWeight, "diversity-weight", 0.3, "Weight for head diversity (0-1, higher = more exploration)")
+	flag.IntVar(&splitInterval, "split-interval", 20, "Check for split opportunities every N samples")
+
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	// Unify host: by default use --host for both SNI and Host header.
-	// Old flags are still supported and override independently if provided.
 	if sni == "" {
 		sni = host
 	}
@@ -109,7 +117,8 @@ func main() {
 		hostHdr = host
 	}
 
-	cfg := search.Config{
+	// Build engine config
+	cfg := engine.Config{
 		Budget:          budget,
 		TopN:            topN,
 		Concurrency:     concur,
@@ -122,6 +131,8 @@ func main() {
 		MaxBitsV6:       maxBitsV6,
 		Seed:            seed,
 		Verbose:         verbose,
+		DiversityWeight: diversityWeight,
+		SplitInterval:   splitInterval,
 	}
 
 	probeCfg := probe.Config{
@@ -131,18 +142,21 @@ func main() {
 		Path:       path,
 	}
 
-	req := search.Request{
+	req := engine.Request{
 		CIDRs:    []string(cidrs),
 		CIDRFile: cidrFile,
 		Probe:    probeCfg,
 	}
 
-	res, err := search.Run(ctx, cfg, req)
+	// Create and run engine
+	eng := engine.New(cfg, probeCfg)
+	res, err := eng.Run(ctx, req)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 
+	// Download speed test
 	if dlTop < 0 {
 		dlTop = 0
 	}
@@ -159,9 +173,9 @@ func main() {
 		})
 		for i := 0; i < dlTop; i++ {
 			r := &res.Top[i]
-			dctx, cancel := context.WithTimeout(ctx, dlTimeout)
+			dctx, dcancel := context.WithTimeout(ctx, dlTimeout)
 			dr := dlp.Download(dctx, r.IP)
-			cancel()
+			dcancel()
 			r.DownloadOK = dr.OK
 			r.DownloadBytes = dr.Bytes
 			r.DownloadMS = dr.TotalMS
@@ -200,8 +214,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Collect IPs from download-tested results only (first dlTop entries)
-		// Filter for successful downloads and sort by download speed (Mbps, descending)
+		// Collect IPs from download-tested results only
 		type dlResult struct {
 			IP   netip.Addr
 			Mbps float64
@@ -253,6 +266,7 @@ func main() {
 		}
 	}
 
+	// Output
 	var w *os.File = os.Stdout
 	if outPath != "" {
 		f, err := os.Create(outPath)

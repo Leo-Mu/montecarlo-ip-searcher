@@ -8,10 +8,11 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/search"
+	"github.com/Leo-Mu/montecarlo-ip-searcher/internal/engine"
 )
 
-func WriteJSONL(w io.Writer, rows []search.TopResult) error {
+// WriteJSONL writes results as JSON Lines format.
+func WriteJSONL(w io.Writer, rows []engine.TopResult) error {
 	enc := json.NewEncoder(w)
 	for _, r := range rows {
 		if err := enc.Encode(r); err != nil {
@@ -21,7 +22,8 @@ func WriteJSONL(w io.Writer, rows []search.TopResult) error {
 	return nil
 }
 
-func WriteCSV(w io.Writer, rows []search.TopResult) error {
+// WriteCSV writes results as CSV format.
+func WriteCSV(w io.Writer, rows []engine.TopResult) error {
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 
@@ -71,8 +73,9 @@ func WriteCSV(w io.Writer, rows []search.TopResult) error {
 	return cw.Error()
 }
 
-func WriteText(w io.Writer, rows []search.TopResult) error {
-	// Ensure stable output.
+// WriteText writes results as human-readable text format.
+func WriteText(w io.Writer, rows []engine.TopResult) error {
+	// Ensure stable output
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].ScoreMS < rows[j].ScoreMS })
 	for i, r := range rows {
 		colo := ""

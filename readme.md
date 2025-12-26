@@ -1,27 +1,29 @@
 # Monte Carlo IP Searcher（mcis）
 
-一个 **Cloudflare IP 优选**工具：用**递进式蒙特卡罗 + 多头分散搜索（multi-head + beam）**，在更少探测次数下，从 IPv4/IPv6 网段里找到更快/更稳定的 IP。
+一个 **Cloudflare IP 优选**工具：用**层次化 Thompson Sampling + 多头分散搜索**，在更少探测次数下，从 IPv4/IPv6 网段里找到更快/更稳定的 IP。
+
+v0.2.0 采用贝叶斯优化算法，自动平衡"探索"与"利用"，无需手动调参。
 
 示例优选域名：`hao.haohaohao.xyz`
 
 IPv4 和 IPv6 的推荐命令分别为
 
 ```bash
-go run ./cmd/mcis --budget 500 --concurrency 50 --heads 8 --beam 32 -v --out text --host example.com --cidr-file ./ipv4cidr.txt
+go run ./cmd/mcis -v --out text --cidr-file ./ipv4cidr.txt
 ```
 
 ```bash
-go run ./cmd/mcis --budget 2000 --concurrency 100 --heads 10 --beam 32 -v --out text --host example.com --cidr-file ./ipv6cidr.txt
+go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt
 ```
 
 [Release](https://github.com/Leo-Mu/montecarlo-ip-searcher/releases/latest) 用户下载解压后在文件夹中右键打开终端，并将程序拖入终端，加入参数即可。
 
 ```bash
- --budget 500 --concurrency 50 --heads 8 --beam 32 -v --out text --host example.com --cidr-file ./ipv4cidr.txt
+-v --out text --cidr-file ./ipv4cidr.txt
 ```
 
 ```bash
- --budget 2000 --concurrency 100 --heads 10 --beam 32 -v --out text --host example.com --cidr-file ./ipv6cidr.txt
+-v --out text --cidr-file ./ipv6cidr.txt
 ```
 
 注意，本项目使用的是 https 真返回测速，所以显示延迟会是其它工具的结果加上一个固定值，使用起来是一样的。使用你的网站作为 `--host`（同时用于 SNI 和 Host header），可以保证优选出来的 ip 当前在你的区域一定对你的网站生效，如有特殊需求还可自定义 path。
@@ -30,8 +32,10 @@ go run ./cmd/mcis --budget 2000 --concurrency 100 --heads 10 --beam 32 -v --out 
 
 ## 特色
 
-- **递进式搜索**：不是全段扫描，而是对表现更好的子网逐步“下钻拆分”，把预算集中到更有潜力的区域。
-- **多头分散探索**：同时并行探索多个次优子网，降低“先入为主”陷入局部最优的概率。
+- **Thompson Sampling**：贝叶斯优化算法，自动平衡探索与利用，无需手动调参（相比 UCB 算法）。
+- **递进式下钻**：不是全段扫描，而是对表现更好的子网逐步"下钻拆分"，把预算集中到更有潜力的区域。
+- **多头分散探索**：多个搜索头并行探索不同区域，通过"排斥力"机制避免收敛到同一局部最优。
+- **层次化统计**：每个前缀维护独立的贝叶斯后验分布，支持快速识别优质子网。
 - **IPv4 / IPv6 同时支持**：CIDR 解析、拆分、采样、探测全流程支持 v4/v6 混合输入。
 - **强制直连探测**：即使系统/环境变量配置了代理，本工具也会**忽略 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`**，确保测速不被代理污染。
 - **探测方式**：默认对 `https://example.com/cdn-cgi/trace` 发起请求，域名可用 `--host` 覆盖，也可分别用 `--sni` / `--host-header` 覆盖 tls sni 和 http Host header ；路径可使用 `--path` 覆盖。
@@ -42,19 +46,19 @@ go run ./cmd/mcis --budget 2000 --concurrency 100 --heads 10 --beam 32 -v --out 
 ### 1）用单个 CIDR（IPv4）
 
 ```bash
-./mcis --cidr 1.1.1.0/24 --budget 200 --concurrency 50 --heads 4 --beam 32 -v --out text
+./mcis --cidr 1.1.1.0/24 -v --out text
 ```
 
 ### 2）用单个 CIDR（IPv6）
 
 ```bash
-./mcis --cidr 2606:4700::/32 --budget 500 --concurrency 100 --heads 4 --beam 32 -v --out jsonl
+./mcis --cidr 2606:4700::/32 -v --out text
 ```
 
 ### 3）从文件读取多个 CIDR（IPv4/IPv6 混合）
 
 ```bash
-./mcis --cidr-file cidrs.txt --budget 2000 --concurrency 200 --heads 4 --beam 32 -v --out csv --out-file result.csv
+./mcis --cidr-file cidrs.txt -v --out text
 ```
 
 ## 参数详解
@@ -67,7 +71,9 @@ go run ./cmd/mcis --budget 2000 --concurrency 100 --heads 10 --beam 32 -v --out 
 - `--timeout`：单次探测超时（如 `2s` / `3s`）
 - `--heads`：多头数量（分散探索）
 - `--beam`：每个 head 保留的候选前缀数量（越大越“发散”）
-- `--min-samples-split`：前缀至少采样多少次才允许下钻拆分
+- `--min-samples-split`：前缀至少采样多少次才允许下钻拆分（默认 5）
+- `--split-interval`：每多少个样本检查一次拆分机会（默认 20）
+- `--diversity-weight`：多头多样性权重（0-1，越高越分散探索，默认 0.3）
 - `--split-step-v4`：IPv4 下钻时前缀长度增加步长（例如 `/16 -> /18` 用 `2`）
 - `--split-step-v6`：IPv6 下钻时前缀长度增加步长（例如 `/32 -> /36` 用 `4`）
 - `--max-bits-v4` / `--max-bits-v6`：限制下钻到的最细前缀
@@ -123,7 +129,7 @@ go run ./cmd/mcis --budget 2000 --concurrency 100 --heads 10 --beam 32 -v --out 
 Cloudflare（使用命令行参数）：
 
 ```bash
-./mcis --cidr-file ./ipv4cidr.txt --budget 500 --download-top 5 --dns-provider cloudflare --dns-zone YOUR_ZONE_ID --dns-subdomain cf --dns-token YOUR_API_TOKEN -v
+./mcis --cidr-file ./ipv4cidr.txt --dns-provider cloudflare --dns-zone YOUR_ZONE_ID --dns-subdomain cf --dns-token YOUR_API_TOKEN -v
 ```
 
 Cloudflare（使用环境变量）：
@@ -134,31 +140,31 @@ export CF_API_TOKEN="your_token"
 export CF_ZONE_ID="your_zone_id"
 
 # 然后运行
-./mcis --cidr-file ./ipv4cidr.txt --budget 500 --download-top 5 --dns-provider cloudflare --dns-subdomain cf -v
+./mcis --cidr-file ./ipv4cidr.txt --dns-provider cloudflare --dns-subdomain cf -v
 ```
 
 Vercel：
 
 ```bash
-./mcis --cidr-file ./ipv4cidr.txt --budget 500 --download-top 5 --dns-provider vercel --dns-zone example.com --dns-subdomain cf --dns-token YOUR_VERCEL_TOKEN -v
+./mcis --cidr-file ./ipv4cidr.txt --dns-provider vercel --dns-zone example.com --dns-subdomain cf --dns-token YOUR_VERCEL_TOKEN -v
 ```
 
 只上传前 3 个最快的 IP：
 
 ```bash
-./mcis --cidr-file ./ipv4cidr.txt --budget 500 --download-top 5 --dns-upload-count 3 --dns-provider cloudflare --dns-zone YOUR_ZONE_ID --dns-subdomain cf --dns-token YOUR_API_TOKEN -v
+./mcis --cidr-file ./ipv4cidr.txt --download-top 5 --dns-upload-count 3 --dns-provider cloudflare --dns-subdomain cf -v
 ```
 
 IPv6 优选并上传（会创建 AAAA 记录）：
 
 ```bash
-./mcis --cidr-file ./ipv6cidr.txt --budget 2000 --concurrency 100 --heads 10 --download-top 5 --dns-provider cloudflare --dns-zone YOUR_ZONE_ID --dns-subdomain cf6 --dns-token YOUR_API_TOKEN -v
+./mcis --cidr-file ./ipv6cidr.txt --dns-provider cloudflare --dns-subdomain cf6 -v
 ```
 
 IPv4 + IPv6 混合优选（A 和 AAAA 记录都会更新）：
 
 ```bash
-./mcis --cidr-file ./ipv4cidr.txt --cidr-file ./ipv6cidr.txt --budget 2000 --download-top 5 --dns-provider cloudflare --dns-zone YOUR_ZONE_ID --dns-subdomain cf --dns-token YOUR_API_TOKEN -v
+./mcis --cidr-file ./ipv4cidr.txt --cidr-file ./ipv6cidr.txt --dns-provider cloudflare --dns-subdomain cf -v
 ```
 
 ## 项目自带网段（bgp.he.net 高可见度）
