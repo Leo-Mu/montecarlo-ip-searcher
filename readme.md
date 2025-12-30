@@ -174,7 +174,8 @@ IPv4 + IPv6 混合优选（A 和 AAAA 记录都会更新）：
 
 仓库内自带一份 **Cloudflare 实际在用（BGP 可见度高）**的网段列表：
 
-- `ipv6cidr.txt`：**2025-12-21** 从 `bgp.he.net` 抓取整理，筛选条件为 **visibility > 90%** 的 Cloudflare IPv6 前缀（每行一个 CIDR）。
+- `ipv4cidr.txt`：**2025-12-31** 从 `bgp.he.net/AS13335` 抓取整理，筛选条件为 **visibility > 90%** 的 Cloudflare IPv4 前缀（每行一个 CIDR）。
+- `ipv6cidr.txt`：**2025-12-31** 从 `bgp.he.net/AS13335` 抓取整理，筛选条件为 **visibility > 90%** 的 Cloudflare IPv6 前缀（每行一个 CIDR）。
 
 说明：
 
