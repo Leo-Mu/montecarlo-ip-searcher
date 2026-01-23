@@ -281,9 +281,16 @@ func (e *Engine) worker(ctx context.Context, wg *sync.WaitGroup, probeCfg probe.
 
 	prober := probe.NewProber(probeCfg)
 
+	// Calculate timeout for multiple rounds
+	rounds := probeCfg.Rounds
+	if rounds <= 0 {
+		rounds = 6
+	}
+	multiTimeout := probeCfg.Timeout * time.Duration(rounds)
+
 	for task := range e.tasks {
-		pctx, cancel := context.WithTimeout(ctx, probeCfg.Timeout)
-		result := prober.ProbeHTTPTrace(pctx, task.ip)
+		pctx, cancel := context.WithTimeout(ctx, multiTimeout)
+		result := prober.ProbeHTTPTraceMulti(pctx, task.ip)
 		cancel()
 
 		select {

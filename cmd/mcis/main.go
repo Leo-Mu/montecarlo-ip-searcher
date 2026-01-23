@@ -65,6 +65,10 @@ func main() {
 		// New engine parameters
 		diversityWeight float64
 		splitInterval   int
+
+		// Probe rounds configuration
+		rounds    int
+		skipFirst int
 	)
 
 	flag.Var(&cidrs, "cidr", "CIDR to search (repeatable). Example: 1.1.0.0/16 or 2606:4700::/32")
@@ -104,6 +108,10 @@ func main() {
 	flag.Float64Var(&diversityWeight, "diversity-weight", 0.3, "Weight for head diversity (0-1, higher = more exploration)")
 	flag.IntVar(&splitInterval, "split-interval", 20, "Check for split opportunities every N samples")
 
+	// Probe rounds configuration
+	flag.IntVar(&rounds, "rounds", 6, "Number of probe rounds per IP (default: 6)")
+	flag.IntVar(&skipFirst, "skip-first", 1, "Skip first N rounds when calculating average (default: 1, skips handshake overhead)")
+
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -140,6 +148,8 @@ func main() {
 		SNI:        sni,
 		HostHeader: hostHdr,
 		Path:       path,
+		Rounds:     rounds,
+		SkipFirst:  skipFirst,
 	}
 
 	req := engine.Request{
