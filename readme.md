@@ -1,285 +1,244 @@
 # Monte Carlo IP Searcher（mcis）
 
-一个 **Cloudflare IP 优选**工具：用**层次化 Thompson Sampling + 多头分散搜索**，在更少探测次数下，从 IPv4/IPv6 网段里找到更快/更稳定的 IP。
+一个 **Cloudflare IP 优选**工具：用蒙特卡洛搜索算法，在更少探测次数下，从 IPv4/IPv6 网段里找到更快、更稳定的 IP。
 
-v0.2.0 采用贝叶斯优化算法，自动平衡"探索"与"利用"，无需手动调参。
+## 为什么选择 mcis？
 
-v0.2.1 新增多次测试取平均功能，跳过首次握手开销，提供更稳定准确的延迟测量。**重要变化**：v0.2.1 之前的延迟结果包含 TCP/TLS 握手开销；v0.2.1 及之后显示的是跳过握手后的真实 TCP/TLS 延迟（连接复用后的延迟），数值会更低且更准确。
+**传统 IP 优选工具的两难困境：**
+- **扫描少了** → 随机打靶，可能错过真正的好 IP
+- **扫描多了** → 耗时太长，还容易触发运营商风控
 
-示例优选域名：`hao.haohaohao.xyz`
+**mcis 的核心价值：用 1/600 的探测次数，找到接近全段扫描的最优 IP。**
 
-[Release](https://github.com/Leo-Mu/montecarlo-ip-searcher/releases/latest) 下载解压后在文件夹中右键打开终端。
+传统工具是"广撒网"，而 mcis 是"精准制导"——通过智能搜索把有限的探测预算集中到真正有潜力的 IP 段，好钢用在刀刃上。
 
-IPv4 和 IPv6 的命令分别为：
+**效率对比（以 Cloudflare IPv4 为例）：**
+
+| 工具/模式 | 探测次数 | 说明 |
+|-----------|----------|------|
+| 全段暴力扫描 | ~180 万 | Cloudflare IPv4 约 180 万个 IP |
+| CloudflareSpeedTest 默认 | ~1 万 | 每个 /24 段随机测 1 个 |
+| **mcis 推荐配置** | **3000** | 智能搜索，聚焦有潜力区域 |
+
+**mcis 如何做到的？**
+
+| 特性 | 说明 |
+|------|------|
+| **递进式下钻** | 发现某个子网表现好，就继续细分探索这个区域，而不是把时间浪费在差的区域 |
+| **多头分散探索** | 多个搜索头并行探索不同区域，通过"排斥力"机制避免都陷入同一个局部最优 |
+| **贝叶斯优化** | 使用 Thompson Sampling 算法，自动平衡"探索新区域"和"利用已知好区域"，无需手动调参 |
+| **多次测试取平均** | 每个 IP 默认测试 6 次，跳过首次握手开销，取平均值，结果更稳定准确 |
+
+## 推荐配置
+
+**直接复制使用，无需调参：**
 
 ```bash
-./mcis -v --out text --cidr-file ./ipv4cidr.txt
-```
+# IPv4 推荐配置
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --budget 3000 --concurrency 100
 
-```bash
-./mcis -v --out text --cidr-file ./ipv6cidr.txt
+# IPv6 推荐配置
+./mcis -v --out text --cidr-file ./ipv6cidr.txt --budget 4000 --heads 16 --concurrency 100
 ```
 
 从源码运行：
 
 ```bash
-go run ./cmd/mcis -v --out text --cidr-file ./ipv4cidr.txt
+# IPv4
+go run ./cmd/mcis -v --out text --cidr-file ./ipv4cidr.txt --budget 3000 --concurrency 100
+
+# IPv6
+go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt --budget 4000 --heads 16 --concurrency 100
 ```
 
-```bash
-go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt
-```
+**为什么 IPv6 配置不同？**
+- IPv6 地址空间远大于 IPv4，需要更多探测次数（budget）才能收敛
+- 更多搜索头（heads）可以并行探索更广的区域，避免陷入局部最优
 
-注意，本项目使用的是 https 真返回测速。**v0.2.1 之前**：延迟包含 TCP/TLS 握手开销；**v0.2.1 及之后**：默认跳过第1次握手，取第2到第n+1次的平均延迟，显示的是复用连接后的真实 TCP/TLS 延迟（更准确）。使用你的网站作为 `--host`（同时用于 SNI 和 Host header），可以保证优选出来的 ip 当前在你的区域一定对你的网站生效，如有特殊需求还可自定义 path。
+**提示：** 推荐在晚高峰时段运行测试，因为此时不同 IP 之间的延迟差异更明显，算法更容易找到最优解。
 
-推荐在晚高峰时段运行测试，因为本项目采用不同 IP 之间的延迟差异来缩小查找范围，差异越小，收敛越困难。
+## 下载安装
 
-## 特色
+[Release](https://github.com/Leo-Mu/montecarlo-ip-searcher/releases/latest) 下载解压后，在文件夹中右键打开终端即可运行。
 
-- **Thompson Sampling**：贝叶斯优化算法，自动平衡探索与利用，无需手动调参（相比 UCB 算法）。
-- **递进式下钻**：不是全段扫描，而是对表现更好的子网逐步"下钻拆分"，把预算集中到更有潜力的区域。
-- **多头分散探索**：多个搜索头并行探索不同区域，通过"排斥力"机制避免收敛到同一局部最优。
-- **层次化统计**：每个前缀维护独立的贝叶斯后验分布，支持快速识别优质子网。
-- **IPv4 / IPv6 同时支持**：CIDR 解析、拆分、采样、探测全流程支持 v4/v6 混合输入。
-- **强制直连探测**：即使系统/环境变量配置了代理，本工具也会**忽略 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`**，确保测速不被代理污染。
-- **多次测试取平均**（v0.2.1 新功能）：每个IP默认测试6次，跳过第1次（包含TCP/TLS握手开销），取第2-6次的平均延迟，提供更稳定准确的测量结果。
-- **探测方式**：默认对 `https://example.com/cdn-cgi/trace` 发起请求，域名可用 `--host` 覆盖，也可分别用 `--sni` / `--host-header` 覆盖 tls sni 和 http Host header ；路径可使用 `--path` 覆盖。
-- **输出格式**：支持 `jsonl` / `csv` / `text`。
-- **DNS 上传功能**：搜索和测速完成后，可将优选 IP 自动上传到 DNS 服务商（支持 Cloudflare 和 Vercel），作为同一子域名的多条 A/AAAA 记录，实现自动化部署。
+## 参数速查表
 
-## 快速开始
+### 常用参数
 
-### 1）用单个 CIDR（IPv4）
+| 参数 | 默认值 | 推荐值 | 说明 |
+|------|--------|--------|------|
+| `--budget` | 2000 | IPv4: 3000, IPv6: 4000 | 总探测次数，越大结果越稳定 |
+| `--concurrency` | 200 | 100 | 并发探测数 |
+| `--heads` | 4 | IPv4: 4, IPv6: 16 | 搜索头数量，越多探索越广 |
+| `--top` | 20 | 20 | 输出 Top N 个最优 IP |
+| `--timeout` | 3s | 3s | 单次探测超时 |
+| `-v` | 关闭 | 开启 | 显示搜索进度 |
+| `--out` | jsonl | text | 输出格式：text/jsonl/csv |
 
-```bash
-./mcis --cidr 1.1.1.0/24 -v --out text
-```
+### 高级参数（一般无需修改）
 
-### 2）用单个 CIDR（IPv6）
-
-```bash
-./mcis --cidr 2606:4700::/32 -v --out text
-```
-
-### 3）从文件读取多个 CIDR（IPv4/IPv6 混合）
-
-```bash
-./mcis --cidr-file cidrs.txt -v --out text
-```
+| 参数 | 默认值 | 取值范围 | 说明 |
+|------|--------|----------|------|
+| `--beam` | 32 | 16-64 | 每个搜索头保留的候选数 |
+| `--diversity-weight` | 0.3 | 0-1 | 多样性权重，越高越分散探索 |
+| `--split-interval` | 20 | 10-30 | 每 N 个样本检查一次拆分 |
+| `--min-samples-split` | 5 | 3-10 | 前缀至少采样 N 次才允许拆分 |
+| `--split-step-v4` | 2 | 1-8 | IPv4 下钻步长（如 /16→/18） |
+| `--split-step-v6` | 4 | 1-16 | IPv6 下钻步长（如 /32→/36） |
+| `--max-bits-v4` | 24 | 1-32 | IPv4 最大前缀长度 |
+| `--max-bits-v6` | 56 | 1-128 | IPv6 最大前缀长度 |
+| `--rounds` | 6 | 3-10 | 每个 IP 测试次数 |
+| `--skip-first` | 1 | 0-3 | 跳过前 N 次测试（去除握手开销） |
+| `--seed` | 0 | ≥0 | 随机种子（0=时间种子） |
 
 ## 参数详解
 
-- `--cidr`：输入 CIDR（可重复）
-- `--cidr-file`：从文件读取 CIDR
-- `--budget`：总探测次数（越大越稳，但更耗时）
-- `--concurrency`：并发探测数量
-- `--top`：输出 Top N IP
-- `--timeout`：单次探测超时（如 `2s` / `3s`，注意：总超时时间 = 单次超时 × 测试次数）
-- `--heads`：多头数量（分散探索）
-- `--beam`：每个 head 保留的候选前缀数量（越大越“发散”）
-- `--min-samples-split`：前缀至少采样多少次才允许下钻拆分（默认 5）
-- `--split-interval`：每多少个样本检查一次拆分机会（默认 20）
-- `--diversity-weight`：多头多样性权重（0-1，越高越分散探索，默认 0.3）
-- `--split-step-v4`：IPv4 下钻时前缀长度增加步长（例如 `/16 -> /18` 用 `2`）
-- `--split-step-v6`：IPv6 下钻时前缀长度增加步长（例如 `/32 -> /36` 用 `4`）
-- `--max-bits-v4` / `--max-bits-v6`：限制下钻到的最细前缀
-- `--host`：同时设置 TLS SNI 与 HTTP Host header（默认 `example.com`）
-- `--sni`：TLS SNI（已弃用：推荐用 `--host`）
-- `--host-header`：HTTP Host（已弃用：推荐用 `--host`）
-- `--path`：请求路径（默认 `/cdn-cgi/trace`）
-- `--rounds`：每个IP的测试次数（默认 6，建议保持默认值）
-- `--skip-first`：计算平均值时跳过前N次测试（默认 1，跳过第1次握手开销）
-- `--out`：输出格式 `jsonl|csv|text`
-- `--out-file`：输出到文件（默认 stdout）
-- `--seed`：随机种子（0 表示使用时间种子）
-- `-v`：输出进度到 stderr
+### 基础参数
 
-### 按 colo 过滤 CDN 节点
+**输入网段：**
+- `--cidr`：直接指定 CIDR，可重复使用。例：`--cidr 1.1.1.0/24 --cidr 1.0.0.0/24`
+- `--cidr-file`：从文件读取 CIDR，每行一个，支持 `#` 注释
 
-探测请求的响应（如 `/cdn-cgi/trace`）中若包含 `colo` 字段，表示该 IP 对应的 CDN 机房代码（如 Cloudflare 的 `HKG`、`SJC` 等）。可通过以下参数只保留或排除指定机房的节点进入最终 Top N 结果：
+**搜索控制：**
+- `--budget`：总探测次数。**越大越稳定，但耗时越长**。IPv6 空间大，建议 4000+
+- `--concurrency`：并发数。建议 50-200，过高可能导致网络拥塞
+- `--top`：输出前 N 个最优 IP
 
-- `--colo`：**白名单**，逗号分隔的 colo 列表；仅这些机房的节点会进入结果。例如：`--colo HKG,SJC`
-- `--colo-exclude`：**黑名单**，逗号分隔的 colo 列表；这些机房的节点不会进入结果。例如：`--colo-exclude LAX,DFW`
+**输出控制：**
+- `--out`：输出格式
+  - `text`：人类可读格式（推荐日常使用）
+  - `jsonl`：JSON Lines 格式（适合程序解析）
+  - `csv`：CSV 格式（适合导入表格）
+- `--out-file`：输出到文件（默认输出到终端）
+- `-v`：显示搜索进度（强烈推荐开启）
 
-未设置时不过滤，所有探测成功的节点按延迟参与排名。`--colo` 与 `--colo-exclude` 只能二选一，不能同时使用。
+### 搜索算法参数
 
-示例（只保留香港和圣何塞节点）：
+- `--heads`：搜索头数量。多个搜索头并行探索不同区域，通过"排斥力"机制避免都跑到同一个局部最优。IPv6 建议 8-16
+- `--beam`：每个搜索头保留的候选前缀数。越大探索越发散
+- `--diversity-weight`：多样性权重（0-1）。越高，搜索头之间越分散
+
+### 探测配置
+
+- `--host`：目标域名，同时设置 TLS SNI 和 HTTP Host header。默认 `example.com`
+- `--path`：请求路径。默认 `/cdn-cgi/trace`（Cloudflare 标准端点）
+- `--timeout`：单次探测超时。注意：实际超时 = timeout × rounds
+- `--rounds`：每个 IP 测试次数。默认 6 次，取平均值减少波动
+- `--skip-first`：跳过前 N 次测试。默认 1（跳过首次握手开销）
+
+**提示：** 使用你自己的网站作为 `--host`，可以确保优选出的 IP 对你的网站生效：
 
 ```bash
-./mcis -v --out text --cidr-file ./ipv4cidr.txt --colo HKG,SJC
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --host your-domain.com --budget 3000 --concurrency 100
 ```
 
-### 下载速度测试参数（对前几名 IP 测速）
+## 可选功能
 
-搜索结束后，可对排名靠前的 IP 进行**下载速度测试**（默认 URL：`https://speed.cloudflare.com/__down?bytes=50000000`）。
+### CDN 节点过滤
 
-- `--download-top`：对 Top N IP 进行测速（默认 5，设为 0 关闭）
-- `--download-bytes`：下载大小（默认 50000000 字节）
-- `--download-timeout`：单个 IP 下载测速超时（默认 45s）
+根据 CDN 机房代码（colo）过滤结果：
 
-提示：
+- `--colo`：白名单，只保留指定机房。例：`--colo HKG,SJC`
+- `--colo-exclude`：黑名单，排除指定机房。例：`--colo-exclude LAX,DFW`
 
-- 下载测速会消耗明显流量与时间（50MB/个 IP），建议先用小 N 验证。
-- 本项目同样会**强制直连**并忽略代理环境变量，避免测速被代理扭曲。
+两者只能二选一。
 
-### DNS 上传功能
+### 下载测速
 
-搜索和测速完成后，可将优选 IP 自动上传到 DNS 服务商，作为同一子域名的多条 A/AAAA 记录。
+对排名靠前的 IP 进行下载速度测试：
 
-支持的 DNS 服务商：
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--download-top` | 5 | 对 Top N IP 测速（0=关闭） |
+| `--download-bytes` | 50000000 | 下载大小（字节） |
+| `--download-timeout` | 45s | 单 IP 测速超时 |
 
-- **Cloudflare**
-- **Vercel**
+**注意：** 下载测速消耗流量较大（默认 50MB/个 IP）。
 
-#### DNS 上传参数
+### DNS 自动上传
 
-- `--dns-provider`：DNS 服务商（`cloudflare` 或 `vercel`）
-- `--dns-token`：API Token（也可用环境变量 `CF_API_TOKEN` / `VERCEL_TOKEN`）
-- `--dns-zone`：Cloudflare Zone ID 或 Vercel 域名（也可用环境变量 `CF_ZONE_ID`）
-- `--dns-subdomain`：子域名前缀（如 `cf` 会创建 `cf.example.com`）
-- `--dns-upload-count`：上传 IP 数量（默认与 `--download-top` 相同）
-- `--dns-team-id`：Vercel Team ID（可选，也可用环境变量 `VERCEL_TEAM_ID`）
+搜索完成后，自动将优选 IP 上传到 DNS 服务商。支持 **Cloudflare** 和 **Vercel**。
 
-#### 工作流程
+| 参数 | 说明 |
+|------|------|
+| `--dns-provider` | DNS 服务商：`cloudflare` 或 `vercel` |
+| `--dns-token` | API Token（或用环境变量 `CF_API_TOKEN` / `VERCEL_TOKEN`） |
+| `--dns-zone` | Zone ID（Cloudflare）或域名（Vercel），或用环境变量 `CF_ZONE_ID` |
+| `--dns-subdomain` | 子域名前缀（如 `cf` 会创建 `cf.example.com`） |
+| `--dns-upload-count` | 上传 IP 数量（默认与 `--download-top` 相同） |
 
-1. 只从经过下载测速的 IP（前 `--download-top` 个）中选择
-2. 按下载速度（Mbps）降序排序
-3. 删除该子域的所有同类型旧记录（A 或 AAAA）
-4. 创建新的 DNS 记录
-
-#### 示例
-
-Cloudflare（使用命令行参数）：
+示例：
 
 ```bash
-./mcis --cidr-file ./ipv4cidr.txt --dns-provider cloudflare --dns-zone YOUR_ZONE_ID --dns-subdomain cf --dns-token YOUR_API_TOKEN -v
-```
-
-Cloudflare（使用环境变量）：
-
-```bash
-# 先设置环境变量
+# Cloudflare（使用环境变量）
 export CF_API_TOKEN="your_token"
 export CF_ZONE_ID="your_zone_id"
-
-# 然后运行
 ./mcis --cidr-file ./ipv4cidr.txt --dns-provider cloudflare --dns-subdomain cf -v
+
+# Vercel
+./mcis --cidr-file ./ipv4cidr.txt --dns-provider vercel --dns-zone example.com --dns-subdomain cf --dns-token YOUR_TOKEN -v
 ```
 
-Vercel：
+## 自带网段文件
 
-```bash
-./mcis --cidr-file ./ipv4cidr.txt --dns-provider vercel --dns-zone example.com --dns-subdomain cf --dns-token YOUR_VERCEL_TOKEN -v
-```
+仓库自带 Cloudflare 高可见度网段（从 `bgp.he.net/AS13335` 抓取，visibility > 90%）：
 
-只上传前 3 个最快的 IP：
+- `ipv4cidr.txt`：IPv4 网段
+- `ipv6cidr.txt`：IPv6 网段
 
-```bash
-./mcis --cidr-file ./ipv4cidr.txt --download-top 5 --dns-upload-count 3 --dns-provider cloudflare --dns-subdomain cf -v
-```
+更新日期：2026-01-23。
 
-IPv6 优选并上传（会创建 AAAA 记录）：
-
-```bash
-./mcis --cidr-file ./ipv6cidr.txt --dns-provider cloudflare --dns-subdomain cf6 -v
-```
-
-IPv4 + IPv6 混合优选（A 和 AAAA 记录都会更新）：
-
-```bash
-./mcis --cidr-file ./ipv4cidr.txt --cidr-file ./ipv6cidr.txt --dns-provider cloudflare --dns-subdomain cf -v
-```
-
-## 项目自带网段（bgp.he.net 高可见度）
-
-仓库内自带一份 **Cloudflare 实际在用（BGP 可见度高）**的网段列表：
-
-- `ipv4cidr.txt`：**2026-01-23** 从 `bgp.he.net/AS13335` 抓取整理，筛选条件为 **visibility > 90%** 的 Cloudflare IPv4 前缀（每行一个 CIDR）。
-- `ipv6cidr.txt`：**2026-01-23** 从 `bgp.he.net/AS13335` 抓取整理，筛选条件为 **visibility > 90%** 的 Cloudflare IPv6 前缀（每行一个 CIDR）。
-
-说明：
-
-- 该列表用于提供一个“更贴近实际在用”的候选搜索空间，减少在冷门/未广播段上的无效探测。
-- BGP 可见度与实际可用性会随时间变化；建议你按需定期更新该文件。
-
-## CIDR 文件格式（`--cidr-file`）
+## CIDR 文件格式
 
 - 每行一个 CIDR
-- 支持空行
-- 支持 `#` 注释（行首或行尾）
-
-示例 `cidrs.txt`：
+- 支持空行和 `#` 注释
 
 ```text
-# v4
+# IPv4
 1.1.0.0/16
 1.0.0.0/16
 
-# v6
+# IPv6
 2606:4700::/32
 ```
 
-## 输出说明
+## 输出格式说明
 
-### `--out text`
+### text 格式
 
-每行：
+每行包含：rank、ip、score_ms、ok/status、prefix、colo
 
-- `rank`
-- `ip`
-- `score_ms`（越小越好；失败会被惩罚）
-- `ok/status`
-- `prefix`
-- `colo`（若 trace 返回包含该字段）
-- `dl_*`（可选）：若启用下载测速（见下方 `--download-top`），会追加 `dl_ok/dl_mbps/dl_ms` 等字段
+### jsonl 格式
 
-### `--out jsonl`
+一行一个 JSON，包含完整字段：ip、prefix、ok、status、connect_ms、tls_ms、ttfb_ms、total_ms、score_ms、trace 等
 
-一行一个 JSON，对应 `TopResult` 结构，包含：`ip/prefix/ok/status/connect_ms/tls_ms/ttfb_ms/total_ms/score_ms/trace/...`
+### csv 格式
 
-### `--out csv`
-
-包含常用字段列，适合直接导入表格分析。
-
-## 代理/直连说明（重要）
-
-本工具探测时**强制直连**：即使你设置了环境变量（如 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`），也不会生效。
-
-如果你希望“走代理”测速，请不要用本项目的探测器逻辑，或自行修改代码（`internal/probe/trace.go` 中 `Transport.Proxy` 被显式设为 `nil`）。
-
-（这样设计是为了避免在系统代理环境下得到被代理扭曲的延迟/可用性结果。）
+常用字段列，适合导入表格分析。
 
 ## 常见问题
 
-### 为什么全部 `ok=false`？
+**Q: 为什么全部 `ok=false`？**
 
 常见原因：
+- 网络无法直连到目标 IP 的 443 端口
+- 本地防火墙拦截
+- 目标不支持当前 host/path 组合
 
-- 网络无法直连到目标 IP 的 443
-- 本地网络/防火墙拦截
-- 目标 IP 不支持当前 `--sni/--host-header/--path` 组合
+建议：调大 `--timeout`，先用默认的 `example.com` + `/cdn-cgi/trace` 测试。
 
-建议先把 `--timeout` 调大一点，并尝试使用默认参数（`example.com` + `/cdn-cgi/trace`）。
+**Q: 代理环境下能用吗？**
+
+本工具**强制直连**，忽略 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY` 环境变量，确保测速结果不被代理影响。
 
 ## 构建
 
-Go 1.25+
-
-在仓库根目录：
+需要 Go 1.25+：
 
 ```bash
-go test ./...
 go build -o mcis ./cmd/mcis
-```
-
-Windows PowerShell 也可以直接：
-
-```powershell
-go build -o mcis.exe .\cmd\mcis
 ```
 
 ## License
 
-本项目使用 **GNU General Public License v3.0（GPL-3.0）** 开源发布。
-
-详见仓库根目录的 [`LICENSE`](./LICENSE) 文件。
+GNU General Public License v3.0（GPL-3.0）
