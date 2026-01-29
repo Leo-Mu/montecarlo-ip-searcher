@@ -238,6 +238,28 @@ func (e *Engine) submitOneTask(ctx context.Context, headID int) error {
 	}
 }
 
+// passColoFilter returns true if the result with the given colo should enter TopN.
+// Empty colo is treated as "no colo". When both ColoAllow and ColoBlock are empty, all pass.
+func (e *Engine) passColoFilter(colo string) bool {
+	if len(e.cfg.ColoAllow) > 0 {
+		for _, c := range e.cfg.ColoAllow {
+			if c == colo {
+				return true
+			}
+		}
+		return false
+	}
+	if len(e.cfg.ColoBlock) > 0 {
+		for _, c := range e.cfg.ColoBlock {
+			if c == colo {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
 // processOneResult processes a single probe result.
 func (e *Engine) processOneResult(d probeDone, timeoutMS float64) {
 	// Update arm tree with result
@@ -248,6 +270,15 @@ func (e *Engine) processOneResult(d probeDone, timeoutMS float64) {
 	var stats bandit.ArmStats
 	if node != nil {
 		stats = node.Stats()
+	}
+
+	// Colo filter: only consider for TopN if colo passes
+	colo := ""
+	if d.result.Trace != nil {
+		colo = d.result.Trace["colo"]
+	}
+	if !e.passColoFilter(colo) {
+		return
 	}
 
 	// Calculate score - use actual latency for success, penalty for failure

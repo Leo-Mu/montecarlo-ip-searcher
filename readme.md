@@ -94,6 +94,21 @@ go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt
 - `--seed`：随机种子（0 表示使用时间种子）
 - `-v`：输出进度到 stderr
 
+### 按 colo 过滤 CDN 节点
+
+探测请求的响应（如 `/cdn-cgi/trace`）中若包含 `colo` 字段，表示该 IP 对应的 CDN 机房代码（如 Cloudflare 的 `HKG`、`SJC` 等）。可通过以下参数只保留或排除指定机房的节点进入最终 Top N 结果：
+
+- `--colo`：**白名单**，逗号分隔的 colo 列表；仅这些机房的节点会进入结果。例如：`--colo HKG,SJC`
+- `--colo-exclude`：**黑名单**，逗号分隔的 colo 列表；这些机房的节点不会进入结果。例如：`--colo-exclude LAX,DFW`
+
+未设置时不过滤，所有探测成功的节点按延迟参与排名。`--colo` 与 `--colo-exclude` 只能二选一，不能同时使用。
+
+示例（只保留香港和圣何塞节点）：
+
+```bash
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --colo HKG,SJC
+```
+
 ### 下载速度测试参数（对前几名 IP 测速）
 
 搜索结束后，可对排名靠前的 IP 进行**下载速度测试**（默认 URL：`https://speed.cloudflare.com/__down?bytes=50000000`）。

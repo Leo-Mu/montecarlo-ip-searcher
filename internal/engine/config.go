@@ -53,6 +53,12 @@ type Config struct {
 
 	// DiversityWeight controls how much diversity affects arm selection (0-1).
 	DiversityWeight float64
+
+	// ColoAllow is a whitelist of CDN colo codes; only results with colo in this list enter TopN. Empty = no filter.
+	ColoAllow []string
+
+	// ColoBlock is a blacklist of CDN colo codes; results with colo in this list do not enter TopN. Empty = no filter.
+	ColoBlock []string
 }
 
 // Request holds the input for a search run.
@@ -121,6 +127,9 @@ func (c *Config) Validate() error {
 	}
 	if c.DiversityWeight < 0 || c.DiversityWeight > 1 {
 		return fmt.Errorf("diversityWeight must be in [0,1], got %f", c.DiversityWeight)
+	}
+	if len(c.ColoAllow) > 0 && len(c.ColoBlock) > 0 {
+		return fmt.Errorf("cannot use both colo allow and colo exclude; use only one")
 	}
 	return nil
 }

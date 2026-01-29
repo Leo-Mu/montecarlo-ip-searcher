@@ -69,6 +69,10 @@ func main() {
 		// Probe rounds configuration
 		rounds    int
 		skipFirst int
+
+		// Colo filter
+		coloAllow   string
+		coloExclude string
 	)
 
 	flag.Var(&cidrs, "cidr", "CIDR to search (repeatable). Example: 1.1.0.0/16 or 2606:4700::/32")
@@ -112,7 +116,17 @@ func main() {
 	flag.IntVar(&rounds, "rounds", 6, "Number of probe rounds per IP (default: 6)")
 	flag.IntVar(&skipFirst, "skip-first", 1, "Skip first N rounds when calculating average (default: 1, skips handshake overhead)")
 
+	// Colo filter (CDN node filter by trace colo)
+	flag.StringVar(&coloAllow, "colo", "", "Comma-separated colo whitelist; only these CDN nodes enter results (e.g. HKG,SJC)")
+	flag.StringVar(&coloExclude, "colo-exclude", "", "Comma-separated colo blacklist; exclude these CDN nodes from results (e.g. LAX,DFW)")
+
 	flag.Parse()
+
+	// Colo: at most one of allow vs exclude
+	if coloAllow != "" && coloExclude != "" {
+		fmt.Fprintln(os.Stderr, "error: cannot use both --colo and --colo-exclude; use only one")
+		os.Exit(1)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -123,6 +137,22 @@ func main() {
 	}
 	if hostHdr == "" {
 		hostHdr = host
+	}
+
+	// Parse colo lists (comma-separated, trim spaces)
+	parseColoList := func(s string) []string {
+		if s == "" {
+			return nil
+		}
+		parts := strings.Split(s, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
 	}
 
 	// Build engine config
@@ -141,6 +171,8 @@ func main() {
 		Verbose:         verbose,
 		DiversityWeight: diversityWeight,
 		SplitInterval:   splitInterval,
+		ColoAllow:       parseColoList(coloAllow),
+		ColoBlock:       parseColoList(coloExclude),
 	}
 
 	probeCfg := probe.Config{
