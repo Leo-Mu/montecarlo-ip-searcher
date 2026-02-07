@@ -152,6 +152,16 @@ go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt --budget 4000 --heads
 | `--download-top` | 5 | 对 Top N IP 测速（0=关闭） |
 | `--download-bytes` | 50000000 | 下载大小（字节） |
 | `--download-timeout` | 45s | 单 IP 测速超时 |
+| `--download-url` | （空） | 自定义测速文件地址（见下方说明） |
+
+**自定义测速地址：** 由于 Cloudflare 默认测速端点 `speed.cloudflare.com/__down` 对大文件有 10MB 限制，可通过 `--download-url` 指定自定义的测速文件地址。程序会从 URL 中自动解析出 host（用于 TLS SNI 和 HTTP Host 头）和路径。
+
+```bash
+# 使用自定义测速地址
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --download-url https://your-domain.com/path/to/largefile
+```
+
+当指定 `--download-url` 时，`--download-bytes` 不再拼接到 URL 查询参数中（因为自定义地址通常指向固定大小的文件），但仍用于限制最大读取字节数和计算下载速度。
 
 **注意：** 下载测速消耗流量较大（默认 50MB/个 IP）。
 

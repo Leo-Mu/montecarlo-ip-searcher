@@ -16,10 +16,12 @@ import (
 type DownloadConfig struct {
 	Timeout time.Duration
 	Bytes   int64
-	// Fixed for Cloudflare speed test; can be exposed later if needed.
 	SNI      string
 	HostName string
 	Path     string
+	// CustomURL indicates the user supplied a custom download URL.
+	// When true, the Path is used as-is (no "?bytes=N" appended).
+	CustomURL bool
 }
 
 type DownloadResult struct {
@@ -94,8 +96,14 @@ func (p *DownloadProber) Download(ctx context.Context, ip netip.Addr) DownloadRe
 		host = "[" + host + "]"
 	}
 
-	// https://speed.cloudflare.com/__down?bytes=50000000
-	url := "https://" + host + p.cfg.Path + "?bytes=" + strconv.FormatInt(p.cfg.Bytes, 10)
+	var url string
+	if p.cfg.CustomURL {
+		// User-supplied URL: use Path as-is (may already contain query params).
+		url = "https://" + host + p.cfg.Path
+	} else {
+		// Default Cloudflare speed-test endpoint: append ?bytes=N.
+		url = "https://" + host + p.cfg.Path + "?bytes=" + strconv.FormatInt(p.cfg.Bytes, 10)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
