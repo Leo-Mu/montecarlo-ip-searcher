@@ -150,10 +150,25 @@ go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt --budget 4000 --heads
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--download-top` | 5 | 对 Top N IP 测速（0=关闭） |
-| `--download-bytes` | 50000000 | 下载大小（字节） |
+| `--download-bytes` | 50000000 | 下载大小（字节）；使用 `--download-url` 时不传则默认不限制 |
 | `--download-timeout` | 45s | 单 IP 测速超时 |
+| `--download-url` | （空） | 自定义测速文件地址（见下方说明） |
 
-**注意：** 下载测速消耗流量较大（默认 50MB/个 IP）。
+**自定义测速地址：** 由于 Cloudflare 默认测速端点 `speed.cloudflare.com/__down` 对生成的下载文件大小可能存在限制，可通过 `--download-url` 指定自定义的测速文件地址。
+
+**指定 `--download-url` 时，默认不限制下载大小**：会下载完整文件直至 EOF，再按实际字节数与耗时计算速度。若需限制流量或时间，可加 `--download-bytes N`（最多读取 N 字节后停止）。未指定自定义 URL 时，仍使用默认 50MB 测速。
+
+```bash
+# 自定义地址：默认下载完整文件再算速度
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --download-url https://your-domain.com/path/to/largefile
+
+# 自定义地址且限制只下载前 50MB
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --download-url https://your-domain.com/path/to/largefile --download-bytes 50000000
+```
+
+**注意：** 不限制大小时单次下载可能很大，请视情况调大 `--download-timeout`；流量约等于「文件大小 × 参与测速的 IP 数」。
+
+**可用的测速大文件地址：** 可使用自己部署在 Cloudflare 后的静态大文件；或使用走 Cloudflare CDN 的公开下载链接（如厂商官网的安装包、镜像等）。社区整理的可选地址可参考 [CloudflareSpeedTest 讨论区](https://github.com/XIU2/CloudflareSpeedTest/discussions/490)。
 
 ### DNS 自动上传
 

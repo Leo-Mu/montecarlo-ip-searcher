@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -44,6 +45,7 @@ func main() {
 		dlTop     int
 		dlBytes   int64
 		dlTimeout time.Duration
+		dlURL     string
 		outFmt    string
 		outPath   string
 		splitV4   int
@@ -88,8 +90,9 @@ func main() {
 	flag.StringVar(&hostHdr, "host-header", "", "HTTP Host header (deprecated: use --host)")
 	flag.StringVar(&path, "path", "/cdn-cgi/trace", "HTTP path to request")
 	flag.IntVar(&dlTop, "download-top", 5, "After search, run download speed test for top N IPs (0 to disable)")
-	flag.Int64Var(&dlBytes, "download-bytes", 50_000_000, "Download test size in bytes (speed.cloudflare.com/__down?bytes=...)")
+	flag.Int64Var(&dlBytes, "download-bytes", 0, "Download test size in bytes; 0 = 50M for default endpoint, no limit for custom URL (default: 0)")
 	flag.DurationVar(&dlTimeout, "download-timeout", 45*time.Second, "Per-IP download test timeout")
+	flag.StringVar(&dlURL, "download-url", "", "Custom download test URL (e.g. https://myhost.com/path/to/file). Overrides default speed.cloudflare.com")
 	flag.StringVar(&outFmt, "out", "jsonl", "Output format: jsonl|csv|text")
 	flag.StringVar(&outPath, "out-file", "", "Write output to file (default: stdout)")
 	flag.IntVar(&splitV4, "split-step-v4", 2, "When splitting an IPv4 prefix, increase prefix bits by this step")
@@ -202,17 +205,50 @@ func main() {
 	if dlTop < 0 {
 		dlTop = 0
 	}
-	if dlTop > 0 && dlBytes > 0 {
+	if dlTop > 0 {
 		if dlTop > len(res.Top) {
 			dlTop = len(res.Top)
 		}
-		dlp := probe.NewDownloadProber(probe.DownloadConfig{
-			Timeout:  dlTimeout,
-			Bytes:    dlBytes,
-			SNI:      "speed.cloudflare.com",
-			HostName: "speed.cloudflare.com",
-			Path:     "/__down",
-		})
+		// Default Bytes=0 (no limit); when no custom URL use 50M.
+		if dlBytes == 0 && dlURL == "" {
+			dlBytes = 50_000_000
+		}
+		dlCfg := probe.DownloadConfig{
+			Timeout: dlTimeout,
+			Bytes:   dlBytes,
+		}
+		if dlURL != "" {
+			u, err := url.Parse(dlURL)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid --download-url:", err)
+				os.Exit(1)
+			}
+			if u.Hostname() == "" {
+				fmt.Fprintln(os.Stderr, "error: --download-url must include a hostname (e.g. https://myhost.com/path/to/file)")
+				os.Exit(1)
+			}
+			dlCfg.SNI = u.Hostname()
+			dlCfg.HostName = u.Hostname()
+			dlCfg.Path = u.Path
+			if u.RawQuery != "" {
+				dlCfg.Path = u.Path + "?" + u.RawQuery
+			}
+			dlCfg.CustomURL = true
+		}
+		dlp := probe.NewDownloadProber(dlCfg)
+		if verbose {
+			if dlURL != "" {
+				bytesDesc := fmt.Sprintf("max %d bytes", dlCfg.Bytes)
+				if dlCfg.Bytes == 0 {
+					bytesDesc = "full file (no limit)"
+				}
+				fmt.Fprintf(os.Stderr, "download: using custom URL host=%s path=%s (top %d IPs, %s)\n",
+					dlCfg.HostName, dlCfg.Path, dlTop, bytesDesc)
+			} else {
+				fmt.Fprintf(os.Stderr, "download: using default speed.cloudflare.com/__down (top %d IPs, %d bytes)\n",
+					dlTop, dlBytes)
+			}
+		}
 		for i := 0; i < dlTop; i++ {
 			r := &res.Top[i]
 			dctx, dcancel := context.WithTimeout(ctx, dlTimeout)

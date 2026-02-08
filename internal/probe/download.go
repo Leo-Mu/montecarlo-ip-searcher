@@ -16,10 +16,12 @@ import (
 type DownloadConfig struct {
 	Timeout time.Duration
 	Bytes   int64
-	// Fixed for Cloudflare speed test; can be exposed later if needed.
 	SNI      string
 	HostName string
 	Path     string
+	// CustomURL indicates the user supplied a custom download URL.
+	// When true, the Path is used as-is (no "?bytes=N" appended).
+	CustomURL bool
 }
 
 type DownloadResult struct {
@@ -42,7 +44,8 @@ func NewDownloadProber(cfg DownloadConfig) *DownloadProber {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 45 * time.Second
 	}
-	if cfg.Bytes <= 0 {
+	// Default endpoint needs ?bytes=N in URL; custom URL can use Bytes==0 for "no limit".
+	if cfg.Bytes <= 0 && !cfg.CustomURL {
 		cfg.Bytes = 50_000_000
 	}
 	if cfg.SNI == "" {
@@ -94,8 +97,14 @@ func (p *DownloadProber) Download(ctx context.Context, ip netip.Addr) DownloadRe
 		host = "[" + host + "]"
 	}
 
-	// https://speed.cloudflare.com/__down?bytes=50000000
-	url := "https://" + host + p.cfg.Path + "?bytes=" + strconv.FormatInt(p.cfg.Bytes, 10)
+	var url string
+	if p.cfg.CustomURL {
+		// User-supplied URL: use Path as-is (may already contain query params).
+		url = "https://" + host + p.cfg.Path
+	} else {
+		// Default Cloudflare speed-test endpoint: append ?bytes=N.
+		url = "https://" + host + p.cfg.Path + "?bytes=" + strconv.FormatInt(p.cfg.Bytes, 10)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -126,13 +135,17 @@ func (p *DownloadProber) Download(ctx context.Context, ip netip.Addr) DownloadRe
 		return out
 	}
 
-	// Read exactly cfg.Bytes or until EOF, whichever comes first.
-	n, err := io.CopyN(io.Discard, resp.Body, p.cfg.Bytes)
-	// Always record partial progress, even if the copy fails (e.g. timeout mid-stream).
+	var n int64
+	if p.cfg.Bytes == 0 {
+		// No limit: read until EOF (custom URL only).
+		n, err = io.Copy(io.Discard, resp.Body)
+	} else {
+		// Read at most cfg.Bytes.
+		n, err = io.CopyN(io.Discard, resp.Body, p.cfg.Bytes)
+	}
 	elapsed := time.Since(start)
 	out.TotalMS = elapsed.Milliseconds()
 	out.Bytes = n
-	// bits per second -> Mbps (10^6)
 	if elapsed > 0 {
 		out.Mbps = (float64(n) * 8) / elapsed.Seconds() / 1e6
 	}
