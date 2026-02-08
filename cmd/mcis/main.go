@@ -205,7 +205,7 @@ func main() {
 	if dlTop < 0 {
 		dlTop = 0
 	}
-	if dlTop > 0 && dlBytes > 0 {
+	if dlTop > 0 && (dlBytes > 0 || dlURL != "") {
 		if dlTop > len(res.Top) {
 			dlTop = len(res.Top)
 		}
@@ -230,12 +230,20 @@ func main() {
 				dlCfg.Path = u.Path + "?" + u.RawQuery
 			}
 			dlCfg.CustomURL = true
+			// Default to no limit for custom URL; user can cap with --download-bytes.
+			if dlBytes == 50_000_000 {
+				dlCfg.Bytes = 0
+			}
 		}
 		dlp := probe.NewDownloadProber(dlCfg)
 		if verbose {
 			if dlURL != "" {
-				fmt.Fprintf(os.Stderr, "download: using custom URL host=%s path=%s (top %d IPs, max %d bytes)\n",
-					dlCfg.HostName, dlCfg.Path, dlTop, dlBytes)
+				bytesDesc := fmt.Sprintf("max %d bytes", dlCfg.Bytes)
+				if dlCfg.Bytes == 0 {
+					bytesDesc = "full file (no limit)"
+				}
+				fmt.Fprintf(os.Stderr, "download: using custom URL host=%s path=%s (top %d IPs, %s)\n",
+					dlCfg.HostName, dlCfg.Path, dlTop, bytesDesc)
 			} else {
 				fmt.Fprintf(os.Stderr, "download: using default speed.cloudflare.com/__down (top %d IPs, %d bytes)\n",
 					dlTop, dlBytes)
