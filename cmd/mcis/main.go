@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -26,6 +27,42 @@ func (r *repeatStringFlag) String() string { return strings.Join(*r, ",") }
 func (r *repeatStringFlag) Set(v string) error {
 	*r = append(*r, v)
 	return nil
+}
+
+// isValidDomain validates if a string is a valid domain name.
+// Returns true if the domain is valid, false otherwise.
+func isValidDomain(domain string) bool {
+	if domain == "" {
+		return false
+	}
+
+	// Maximum length check (253 characters)
+	if len(domain) > 253 {
+		return false
+	}
+
+	// Domain regex pattern:
+	// - Each label: alphanumeric + hyphens, but not starting/ending with hyphen
+	// - Labels separated by dots
+	// - Must have at least one dot (to distinguish from plain hostnames)
+	// - Total length up to 253 characters
+	// - Each label up to 63 characters
+	const domainPattern = `^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`
+
+	re := regexp.MustCompile(domainPattern)
+	if !re.MatchString(domain) {
+		return false
+	}
+
+	// Check each label length (max 63 chars per label)
+	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if len(label) > 63 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func main() {
@@ -124,6 +161,12 @@ func main() {
 	flag.StringVar(&coloExclude, "colo-exclude", "", "Comma-separated colo blacklist; exclude these CDN nodes from results (e.g. LAX,DFW)")
 
 	flag.Parse()
+
+	// Validate --host parameter
+	if !isValidDomain(host) {
+		fmt.Fprintf(os.Stderr, "error: --host must be a valid domain name, got: %s\n", host)
+		os.Exit(1)
+	}
 
 	// Colo: at most one of allow vs exclude
 	if coloAllow != "" && coloExclude != "" {
