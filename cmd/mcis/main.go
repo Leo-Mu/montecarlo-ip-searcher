@@ -83,6 +83,7 @@ func main() {
 		dlBytes   int64
 		dlTimeout time.Duration
 		dlURL     string
+		dlMode    string
 		outFmt    string
 		outPath   string
 		splitV4   int
@@ -130,6 +131,7 @@ func main() {
 	flag.Int64Var(&dlBytes, "download-bytes", 0, "Download test size in bytes; 0 = 50M for default endpoint, no limit for custom URL (default: 0)")
 	flag.DurationVar(&dlTimeout, "download-timeout", 45*time.Second, "Per-IP download test timeout")
 	flag.StringVar(&dlURL, "download-url", "", "Custom download test URL (e.g. https://myhost.com/path/to/file). Overrides default speed.cloudflare.com")
+	flag.StringVar(&dlMode, "download-mode", "all", "Download test mode: 'all' (test top N) or 'sequential' (test sequentially until N successes)")
 	flag.StringVar(&outFmt, "out", "jsonl", "Output format: jsonl|csv|text")
 	flag.StringVar(&outPath, "out-file", "", "Write output to file (default: stdout)")
 	flag.IntVar(&splitV4, "split-step-v4", 2, "When splitting an IPv4 prefix, increase prefix bits by this step")
@@ -292,7 +294,16 @@ func main() {
 					dlTop, dlBytes)
 			}
 		}
-		for i := 0; i < dlTop; i++ {
+		// Download test with mode support
+		var testCount, successCount int
+		var maxTests int
+		if dlMode == "sequential" {
+			maxTests = len(res.Top) // Sequential mode: test until we have enough successes or run out of IPs
+		} else {
+			maxTests = dlTop // All mode: test exactly dlTop IPs
+		}
+
+		for i := 0; i < maxTests && successCount < dlTop; i++ {
 			r := &res.Top[i]
 			dctx, dcancel := context.WithTimeout(ctx, dlTimeout)
 			dr := dlp.Download(dctx, r.IP)
@@ -302,10 +313,22 @@ func main() {
 			r.DownloadMS = dr.TotalMS
 			r.DownloadMbps = dr.Mbps
 			r.DownloadError = dr.Error
+			testCount++
+			if dr.OK {
+				successCount++
+			}
 			if verbose {
 				fmt.Fprintf(os.Stderr, "download: rank=%d ip=%s ok=%v mbps=%.2f ms=%d bytes=%d err=%s\n",
 					i+1, r.IP.String(), dr.OK, dr.Mbps, dr.TotalMS, dr.Bytes, dr.Error)
 			}
+			// In sequential mode, stop when we have enough successes
+			if dlMode == "sequential" && successCount >= dlTop {
+				break
+			}
+		}
+		if verbose && dlMode == "sequential" {
+			fmt.Fprintf(os.Stderr, "download: mode=sequential tested=%d succeeded=%d target=%d\n",
+				testCount, successCount, dlTop)
 		}
 	}
 

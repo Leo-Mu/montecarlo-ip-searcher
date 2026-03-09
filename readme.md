@@ -153,6 +153,7 @@ go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt --budget 4000 --heads
 | `--download-bytes` | 50000000 | 下载大小（字节）；使用 `--download-url` 时不传则默认不限制 |
 | `--download-timeout` | 45s | 单 IP 测速超时 |
 | `--download-url` | （空） | 自定义测速文件地址（见下方说明） |
+| `--download-mode` | `all` | 测速模式：`all`（测速前 N 个）或 `sequential`（顺序测速直到成功 N 个） |
 
 **自定义测速地址：** 由于 Cloudflare 默认测速端点 `speed.cloudflare.com/__down` 对生成的下载文件大小可能存在限制，可通过 `--download-url` 指定自定义的测速文件地址。
 
@@ -169,6 +170,19 @@ go run ./cmd/mcis -v --out text --cidr-file ./ipv6cidr.txt --budget 4000 --heads
 **注意：** 不限制大小时单次下载可能很大，请视情况调大 `--download-timeout`；流量约等于「文件大小 × 参与测速的 IP 数」。
 
 **可用的测速大文件地址：** 可使用自己部署在 Cloudflare 后的静态大文件；或使用走 Cloudflare CDN 的公开下载链接（如厂商官网的安装包、镜像等）。社区整理的可选地址可参考 [CloudflareSpeedTest 讨论区](https://github.com/XIU2/CloudflareSpeedTest/discussions/490)。
+
+**测速模式说明：**
+
+- `all`（默认）：测速前 `--download-top` 个 IP，不管是否成功
+- `sequential`：按排名顺序逐个测速，**直到成功数达到 `--download-top` 时立即停止**，可节省时间
+
+```bash
+# 默认模式：测速前 5 个 IP（可能有些会失败）
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --download-top 5 --download-mode all
+
+# 顺序模式：按顺序测速，直到 5 个成功就停（如果前 5 个都成功，就只测 5 个）
+./mcis -v --out text --cidr-file ./ipv4cidr.txt --download-top 5 --download-mode sequential
+```
 
 ### DNS 自动上传
 
