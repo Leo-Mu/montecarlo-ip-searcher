@@ -123,7 +123,7 @@ func main() {
 	flag.IntVar(&heads, "heads", 4, "Number of search heads (diversification)")
 	flag.IntVar(&beam, "beam", 32, "Beam width per head (kept candidate prefixes)")
 	flag.DurationVar(&timeout, "timeout", 3*time.Second, "Per-probe timeout")
-	flag.StringVar(&host, "host", "example.com", "Host name used for BOTH TLS SNI and HTTP Host header (recommended)")
+	flag.StringVar(&host, "host", "skk.moe", "Host name used for BOTH TLS SNI and HTTP Host header (recommended)")
 	flag.StringVar(&sni, "sni", "", "TLS SNI server name (deprecated: use --host)")
 	flag.StringVar(&hostHdr, "host-header", "", "HTTP Host header (deprecated: use --host)")
 	flag.StringVar(&path, "path", "/cdn-cgi/trace", "HTTP path to request")
@@ -132,6 +132,11 @@ func main() {
 	flag.DurationVar(&dlTimeout, "download-timeout", 45*time.Second, "Per-IP download test timeout")
 	flag.StringVar(&dlURL, "download-url", "", "Custom download test URL (e.g. https://myhost.com/path/to/file). Overrides default speed.cloudflare.com")
 	flag.StringVar(&dlMode, "download-mode", "all", "Download test mode: 'all' (test top N) or 'sequential' (test sequentially until N successes)")
+
+	// HTTP/3 support
+	var enableHTTP3 bool
+	flag.BoolVar(&enableHTTP3, "http3", false, "Enable HTTP/3 (QUIC) protocol for probes and downloads")
+
 	flag.StringVar(&outFmt, "out", "jsonl", "Output format: jsonl|csv|text")
 	flag.StringVar(&outPath, "out-file", "", "Write output to file (default: stdout)")
 	flag.IntVar(&splitV4, "split-step-v4", 2, "When splitting an IPv4 prefix, increase prefix bits by this step")
@@ -224,12 +229,13 @@ func main() {
 	}
 
 	probeCfg := probe.Config{
-		Timeout:    timeout,
-		SNI:        sni,
-		HostHeader: hostHdr,
-		Path:       path,
-		Rounds:     rounds,
-		SkipFirst:  skipFirst,
+		Timeout:     timeout,
+		SNI:         sni,
+		HostHeader:  hostHdr,
+		Path:        path,
+		Rounds:      rounds,
+		SkipFirst:   skipFirst,
+		EnableHTTP3: enableHTTP3,
 	}
 
 	req := engine.Request{
@@ -259,8 +265,9 @@ func main() {
 			dlBytes = 50_000_000
 		}
 		dlCfg := probe.DownloadConfig{
-			Timeout: dlTimeout,
-			Bytes:   dlBytes,
+			Timeout:     dlTimeout,
+			Bytes:       dlBytes,
+			EnableHTTP3: enableHTTP3,
 		}
 		if dlURL != "" {
 			u, err := url.Parse(dlURL)
@@ -290,8 +297,13 @@ func main() {
 				fmt.Fprintf(os.Stderr, "download: using custom URL host=%s path=%s (top %d IPs, %s)\n",
 					dlCfg.HostName, dlCfg.Path, dlTop, bytesDesc)
 			} else {
-				fmt.Fprintf(os.Stderr, "download: using default speed.cloudflare.com/__down (top %d IPs, %d bytes)\n",
-					dlTop, dlBytes)
+				if enableHTTP3 {
+					fmt.Fprintf(os.Stderr, "download: using default h3.speed.cloudflare.com/__down (top %d IPs, %d bytes)\n",
+						dlTop, dlBytes)
+				} else {
+					fmt.Fprintf(os.Stderr, "download: using default speed.cloudflare.com/__down (top %d IPs, %d bytes)\n",
+						dlTop, dlBytes)
+				}
 			}
 		}
 		// Download test with mode support
