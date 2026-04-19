@@ -215,7 +215,7 @@ export CF_ZONE_ID="your_zone_id"
 - `ipv4cidr.txt`：IPv4 网段
 - `ipv6cidr.txt`：IPv6 网段
 
-更新日期：2026-03-25。
+更新日期：2026-04-19。
 
 ## CIDR 文件格式
 
