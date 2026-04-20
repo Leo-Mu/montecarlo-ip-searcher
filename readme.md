@@ -235,15 +235,106 @@ export CF_ZONE_ID="your_zone_id"
 
 ### text 格式
 
-每行包含：rank、ip、score_ms、ok/status、prefix、colo
+每行包含以下字段，便于人类阅读：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| rank | 排名 | 1 |
+| ip | IP 地址 | 1.1.1.1 |
+| score_ms | 评分（毫秒） | 15.3ms |
+| latency | 延迟测试状态 | `ok` 或 `failed` |
+| http_code | HTTP 状态码 | 200 |
+| prefix | 所属前缀 | 1.1.1.0/24 |
+| colo | CDN 机房代码 | LAX |
+| dl | 下载测速状态（如果有） | `ok` 或 `failed` |
+| dl_mbps | 下载速度（成功时） | 50.25 |
+| dl_ms | 下载耗时（成功时） | 1000 |
+| dl_bytes | 下载字节数（成功时） | 50000000 |
+| dl_err | 下载错误信息（失败时） | timeout |
+
+**示例输出：**
+```
+1	1.1.1.1	15.3ms	latency=ok	http_code=200	prefix=1.1.1.0/24	colo=LAX	dl=ok	dl_mbps=50.25	dl_ms=1000	dl_bytes=50000000
+2	1.1.1.2	20.1ms	latency=ok	http_code=200	prefix=1.1.1.0/24	colo=SJC	dl=failed	dl_err=timeout
+3	1.1.1.3	25.5ms	latency=failed	http_code=0	prefix=1.1.1.0/24	colo=
+```
 
 ### jsonl 格式
 
-一行一个 JSON，包含完整字段：ip、prefix、ok、status、connect_ms、tls_ms、ttfb_ms、total_ms、score_ms、trace 等
+一行一个 JSON，包含完整字段：
+
+```json
+{
+  "ip": "1.1.1.1",
+  "prefix": "1.1.1.0/24",
+  "latency_ok": true,
+  "http_code": 200,
+  "error": "",
+  "connect_ms": 10,
+  "tls_ms": 5,
+  "ttfb_ms": 15,
+  "total_ms": 20,
+  "score_ms": 15.3,
+  "trace": {"colo": "LAX"},
+  "download_tested": true,
+  "download_ok": true,
+  "download_bytes": 50000000,
+  "download_ms": 1000,
+  "download_mbps": 50.25,
+  "download_error": "",
+  "prefix_samples": 10,
+  "prefix_ok": 8,
+  "prefix_fail": 2
+}
+```
 
 ### csv 格式
 
-常用字段列，适合导入表格分析。
+常用字段列，适合导入表格分析：
+
+| 字段 | 说明 |
+|------|------|
+| rank | 排名 |
+| ip | IP 地址 |
+| prefix | 所属前缀 |
+| latency_ok | 延迟测试是否成功 |
+| http_code | HTTP 状态码 |
+| error | 错误信息 |
+| connect_ms | 连接耗时 |
+| tls_ms | TLS 握手耗时 |
+| ttfb_ms | 首字节时间 |
+| total_ms | 总耗时 |
+| score_ms | 评分 |
+| samples_prefix | 前缀采样次数 |
+| ok_prefix | 前缀成功次数 |
+| fail_prefix | 前缀失败次数 |
+| download_tested | 是否进行了下载测速 |
+| download_ok | 下载测速是否成功 |
+| download_mbps | 下载速度 |
+| download_ms | 下载耗时 |
+| download_bytes | 下载字节数 |
+| download_error | 下载错误信息 |
+| colo | CDN 机房代码 |
+
+### 程序过滤建议
+
+使用 CSV 或 JSONL 格式时，可以通过以下字段过滤：
+
+1. **只获取延迟测试成功的 IP：**
+   - CSV: 过滤 `latency_ok=true`
+   - JSONL: 过滤 `latency_ok=true`
+
+2. **只获取下载测速成功的 IP：**
+   - CSV: 过滤 `download_ok=true`
+   - JSONL: 过滤 `download_ok=true`
+
+3. **获取所有进行了下载测速的 IP（无论成败）：**
+   - CSV: 过滤 `download_tested=true`
+   - JSONL: 过滤 `download_tested=true`
+
+4. **排除测速中途失败的项目：**
+   - 延迟测试失败：`latency_ok=false`
+   - 下载测速失败但延迟测试成功：`latency_ok=true` 且 `download_tested=true` 且 `download_ok=false`
 
 ## 常见问题
 
