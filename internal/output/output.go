@@ -27,12 +27,13 @@ func WriteCSV(w io.Writer, rows []engine.TopResult) error {
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 
+	// CSV 字段名称更清晰，便于程序解析和过滤
 	header := []string{
 		"rank", "ip", "prefix",
-		"ok", "status",
+		"latency_ok", "http_code", "error",
 		"connect_ms", "tls_ms", "ttfb_ms", "total_ms",
 		"score_ms", "samples_prefix", "ok_prefix", "fail_prefix",
-		"download_ok", "download_mbps", "download_ms", "download_bytes", "download_error",
+		"download_tested", "download_ok", "download_mbps", "download_ms", "download_bytes", "download_error",
 		"colo",
 	}
 	if err := cw.Write(header); err != nil {
@@ -44,12 +45,17 @@ func WriteCSV(w io.Writer, rows []engine.TopResult) error {
 		if r.Trace != nil {
 			colo = r.Trace["colo"]
 		}
+
+		// 判断是否有下载测速
+		downloadTested := r.DownloadOK || r.DownloadError != "" || r.DownloadMS != 0 || r.DownloadBytes != 0
+
 		rec := []string{
 			strconv.Itoa(i + 1),
 			r.IP.String(),
 			r.Prefix.String(),
-			strconv.FormatBool(r.OK),
-			strconv.Itoa(r.Status),
+			strconv.FormatBool(r.OK), // latency_ok: 延迟测试是否成功
+			strconv.Itoa(r.Status),   // http_code: HTTP 状态码
+			r.Error,                  // error: 错误信息
 			strconv.FormatInt(r.ConnectMS, 10),
 			strconv.FormatInt(r.TLSMS, 10),
 			strconv.FormatInt(r.TTFBMS, 10),
@@ -58,7 +64,8 @@ func WriteCSV(w io.Writer, rows []engine.TopResult) error {
 			strconv.Itoa(r.PrefixSamples),
 			strconv.Itoa(r.PrefixOK),
 			strconv.Itoa(r.PrefixFail),
-			strconv.FormatBool(r.DownloadOK),
+			strconv.FormatBool(downloadTested), // download_tested: 是否进行了下载测速
+			strconv.FormatBool(r.DownloadOK),   // download_ok: 下载测速是否成功
 			fmt.Sprintf("%.2f", r.DownloadMbps),
 			strconv.FormatInt(r.DownloadMS, 10),
 			strconv.FormatInt(r.DownloadBytes, 10),
@@ -82,15 +89,32 @@ func WriteText(w io.Writer, rows []engine.TopResult) error {
 		if r.Trace != nil {
 			colo = r.Trace["colo"]
 		}
+
+		// Build download test info string - 更清晰的状态标识
 		dl := ""
-		if r.DownloadOK || r.DownloadError != "" || r.DownloadMS != 0 || r.DownloadBytes != 0 {
-			dl = fmt.Sprintf("\tdl_ok=%v\tdl_mbps=%.2f\tdl_ms=%d", r.DownloadOK, r.DownloadMbps, r.DownloadMS)
-			if r.DownloadError != "" {
-				dl += "\tdl_err=" + r.DownloadError
+		hasDownloadTest := r.DownloadOK || r.DownloadError != "" || r.DownloadMS != 0 || r.DownloadBytes != 0
+		if hasDownloadTest {
+			if r.DownloadOK {
+				// 测速成功：显示速度和时间
+				dl = fmt.Sprintf("\tdl=ok\tdl_mbps=%.2f\tdl_ms=%d\tdl_bytes=%d",
+					r.DownloadMbps, r.DownloadMS, r.DownloadBytes)
+			} else {
+				// 测速失败：只显示失败状态和错误信息，避免无意义的0值
+				dl = fmt.Sprintf("\tdl=failed")
+				if r.DownloadError != "" {
+					dl += fmt.Sprintf("\tdl_err=%s", r.DownloadError)
+				}
 			}
 		}
-		_, err := fmt.Fprintf(w, "%d\t%s\t%.1fms\tok=%v\tstatus=%d\tprefix=%s\tcolo=%s%s\n",
-			i+1, r.IP.String(), r.ScoreMS, r.OK, r.Status, r.Prefix.String(), colo, dl)
+
+		// 基础延迟测试状态
+		latencyStatus := "ok"
+		if !r.OK {
+			latencyStatus = "failed"
+		}
+
+		_, err := fmt.Fprintf(w, "%d\t%s\t%.1fms\tlatency=%s\thttp_code=%d\tprefix=%s\tcolo=%s%s\n",
+			i+1, r.IP.String(), r.ScoreMS, latencyStatus, r.Status, r.Prefix.String(), colo, dl)
 		if err != nil {
 			return err
 		}
