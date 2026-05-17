@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 type Config struct {
@@ -21,6 +23,8 @@ type Config struct {
 	Path       string
 	Rounds     int // 总测试次数，默认6
 	SkipFirst  int // 跳过前N次，默认1（跳过第1次握手）
+	// EnableHTTP3 enables HTTP/3 (QUIC) protocol for probes.
+	EnableHTTP3 bool
 }
 
 type Result struct {
@@ -53,22 +57,33 @@ func NewProber(cfg Config) *Prober {
 		cfg.Timeout = 3 * time.Second
 	}
 
-	transport := &http.Transport{
-		Proxy: nil, // critical: ignore HTTP(S)_PROXY and NO_PROXY env vars
-		DialContext: (&net.Dialer{
-			Timeout:   cfg.Timeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1024,
-		MaxIdleConnsPerHost:   256,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   cfg.Timeout,
-		ResponseHeaderTimeout: cfg.Timeout,
-		ExpectContinueTimeout: 1 * time.Second,
-		TLSClientConfig: &tls.Config{
-			ServerName: cfg.SNI,
-		},
+	var transport http.RoundTripper
+	if cfg.EnableHTTP3 {
+		// HTTP/3 transport using QUIC
+		transport = &http3.Transport{
+			TLSClientConfig: &tls.Config{
+				ServerName: cfg.SNI,
+			},
+		}
+	} else {
+		// Standard HTTP/1.1 and HTTP/2 transport
+		transport = &http.Transport{
+			Proxy: nil, // critical: ignore HTTP(S)_PROXY and NO_PROXY env vars
+			DialContext: (&net.Dialer{
+				Timeout:   cfg.Timeout,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          1024,
+			MaxIdleConnsPerHost:   256,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   cfg.Timeout,
+			ResponseHeaderTimeout: cfg.Timeout,
+			ExpectContinueTimeout: 1 * time.Second,
+			TLSClientConfig: &tls.Config{
+				ServerName: cfg.SNI,
+			},
+		}
 	}
 	client := &http.Client{
 		Transport: transport,
@@ -102,29 +117,37 @@ func (p *Prober) probeOnce(ctx context.Context, ip netip.Addr) Result {
 		tlsDur       time.Duration
 	)
 
-	trace := &httptrace.ClientTrace{
-		ConnectStart: func(network, addr string) {
-			connectStart = time.Now()
-		},
-		ConnectDone: func(network, addr string, err error) {
-			if !connectStart.IsZero() {
-				connectDur = time.Since(connectStart)
-			}
-		},
-		TLSHandshakeStart: func() {
-			tlsStart = time.Now()
-		},
-		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
-			if !tlsStart.IsZero() {
-				tlsDur = time.Since(tlsStart)
-			}
-		},
-		GotFirstResponseByte: func() {
-			gotFirstByte = time.Now()
-		},
+	var reqCtx context.Context
+	if p.cfg.EnableHTTP3 {
+		// HTTP/3 doesn't fully support httptrace, use context directly
+		reqCtx = ctx
+	} else {
+		// Use httptrace for HTTP/1.1 and HTTP/2 to collect detailed timing
+		trace := &httptrace.ClientTrace{
+			ConnectStart: func(network, addr string) {
+				connectStart = time.Now()
+			},
+			ConnectDone: func(network, addr string, err error) {
+				if !connectStart.IsZero() {
+					connectDur = time.Since(connectStart)
+				}
+			},
+			TLSHandshakeStart: func() {
+				tlsStart = time.Now()
+			},
+			TLSHandshakeDone: func(state tls.ConnectionState, err error) {
+				if !tlsStart.IsZero() {
+					tlsDur = time.Since(tlsStart)
+				}
+			},
+			GotFirstResponseByte: func() {
+				gotFirstByte = time.Now()
+			},
+		}
+		reqCtx = httptrace.WithClientTrace(ctx, trace)
 	}
 
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		res.Error = err.Error()
 		res.TotalMS = time.Since(start).Milliseconds()
