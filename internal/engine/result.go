@@ -32,8 +32,8 @@ type ProbeResult struct {
 type TopResult struct {
 	IP     netip.Addr   `json:"ip"`
 	Prefix netip.Prefix `json:"prefix"`
-	OK     bool         `json:"ok"`
-	Status int          `json:"status"`
+	OK     bool         `json:"latency_ok"` // 延迟测试是否成功
+	Status int          `json:"http_code"`  // HTTP 状态码
 	Error  string       `json:"error,omitempty"`
 
 	ConnectMS int64             `json:"connect_ms"`
@@ -43,15 +43,39 @@ type TopResult struct {
 	ScoreMS   float64           `json:"score_ms"`
 	Trace     map[string]string `json:"trace,omitempty"`
 
-	DownloadOK    bool    `json:"download_ok"`
-	DownloadBytes int64   `json:"download_bytes"`
-	DownloadMS    int64   `json:"download_ms"`
-	DownloadMbps  float64 `json:"download_mbps"`
-	DownloadError string  `json:"download_error,omitempty"`
+	// 下载测速相关字段
+	DownloadTested bool    `json:"download_tested"` // 是否进行了下载测速
+	DownloadOK     bool    `json:"download_ok"`     // 下载测速是否成功
+	DownloadBytes  int64   `json:"download_bytes"`
+	DownloadMS     int64   `json:"download_ms"`
+	DownloadMbps   float64 `json:"download_mbps"`
+	DownloadError  string  `json:"download_error,omitempty"`
 
 	PrefixSamples int `json:"prefix_samples"`
 	PrefixOK      int `json:"prefix_ok"`
 	PrefixFail    int `json:"prefix_fail"`
+}
+
+// Status 返回整体测试状态，方便程序过滤
+// - "success": 延迟测试成功，且下载测速成功（如果进行了下载测速）
+// - "latency_only": 延迟测试成功，但未进行下载测速
+// - "download_failed": 延迟测试成功，但下载测速失败
+// - "failed": 延迟测试失败
+func (r TopResult) GetTestStatus() string {
+	if !r.OK {
+		return "failed"
+	}
+
+	// 检查是否进行了下载测速
+	hasDownloadTest := r.DownloadTested || r.DownloadOK || r.DownloadError != "" || r.DownloadMS != 0 || r.DownloadBytes != 0
+	if !hasDownloadTest {
+		return "latency_only"
+	}
+
+	if r.DownloadOK {
+		return "success"
+	}
+	return "download_failed"
 }
 
 // Response holds the complete search response.

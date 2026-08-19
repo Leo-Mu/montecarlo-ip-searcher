@@ -308,6 +308,7 @@ func main() {
 			dctx, dcancel := context.WithTimeout(ctx, dlTimeout)
 			dr := dlp.Download(dctx, r.IP)
 			dcancel()
+			r.DownloadTested = true
 			r.DownloadOK = dr.OK
 			r.DownloadBytes = dr.Bytes
 			r.DownloadMS = dr.TotalMS
