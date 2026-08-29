@@ -11,17 +11,21 @@ import (
 	"net/netip"
 	"strconv"
 	"time"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 type DownloadConfig struct {
-	Timeout time.Duration
-	Bytes   int64
-	SNI      string
-	HostName string
-	Path     string
+	Timeout     time.Duration
+	Bytes       int64
+	SNI         string
+	HostName    string
+	Path        string
 	// CustomURL indicates the user supplied a custom download URL.
 	// When true, the Path is used as-is (no "?bytes=N" appended).
-	CustomURL bool
+	CustomURL   bool
+	// EnableHTTP3 enables HTTP/3 (QUIC) protocol for downloads.
+	EnableHTTP3 bool
 }
 
 type DownloadResult struct {
@@ -49,31 +53,50 @@ func NewDownloadProber(cfg DownloadConfig) *DownloadProber {
 		cfg.Bytes = 50_000_000
 	}
 	if cfg.SNI == "" {
-		cfg.SNI = "speed.cloudflare.com"
+		if cfg.EnableHTTP3 {
+			cfg.SNI = "h3.speed.cloudflare.com"
+		} else {
+			cfg.SNI = "speed.cloudflare.com"
+		}
 	}
 	if cfg.HostName == "" {
-		cfg.HostName = "speed.cloudflare.com"
+		if cfg.EnableHTTP3 {
+			cfg.HostName = "h3.speed.cloudflare.com"
+		} else {
+			cfg.HostName = "speed.cloudflare.com"
+		}
 	}
 	if cfg.Path == "" {
 		cfg.Path = "/__down"
 	}
 
-	transport := &http.Transport{
-		Proxy: nil, // critical: ignore HTTP(S)_PROXY and NO_PROXY env vars
-		DialContext: (&net.Dialer{
-			Timeout:   cfg.Timeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   8,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		TLSClientConfig: &tls.Config{
-			ServerName: cfg.SNI,
-		},
+	var transport http.RoundTripper
+	if cfg.EnableHTTP3 {
+		// HTTP/3 transport using QUIC
+		transport = &http3.Transport{
+			TLSClientConfig: &tls.Config{
+				ServerName: cfg.SNI,
+			},
+		}
+	} else {
+		// Standard HTTP/1.1 and HTTP/2 transport
+		transport = &http.Transport{
+			Proxy: nil, // critical: ignore HTTP(S)_PROXY and NO_PROXY env vars
+			DialContext: (&net.Dialer{
+				Timeout:   cfg.Timeout,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          64,
+			MaxIdleConnsPerHost:   8,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 20 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			TLSClientConfig: &tls.Config{
+				ServerName: cfg.SNI,
+			},
+		}
 	}
 
 	return &DownloadProber{
